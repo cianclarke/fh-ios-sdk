@@ -628,10 +628,31 @@ static NSString *const kChangeHistory = @"changeHistory";
     if (nil != dataCreated) {
         [dataCreated enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
             NSString* hashKey = obj[@"hash"];
+            NSString* newlyCreatedRecordUID = key;
             NSMutableArray* history = [self.changeHistory objectForKey:hashKey];
             if (history && [history containsObject:obj[@"hash"]]) {
-                DLog(@"ignore update with hash %@ as it's outdated", obj[@"hash"]);
-                [history removeObject:obj[@"hash"]];
+                NSString* inaccurateUpdateId = [NSMutableString alloc];
+                for (id __strong pendingUpdateId in self.pendingDataRecords){
+                    NSMutableDictionary *pendingUpdatedObject = self.pendingDataRecords[pendingUpdateId];
+                    NSString* pendingPreHash = [[pendingUpdatedObject JSONData] valueForKey:@"preHash"];
+                    if (pendingPreHash != nil && [pendingPreHash isEqualToString:hashKey]){
+                        // we have an in-flight update for a record which has only just been created on the serverside.
+                        // The UIDs don't match - best fix that.
+                        inaccurateUpdateId = pendingUpdateId;
+                    }
+
+                }
+                if (inaccurateUpdateId != nil){
+                    NSMutableDictionary* recordToUpdate = self.pendingDataRecords[inaccurateUpdateId];
+                    // TODO: How to update this - it needs to be a mutable dictionary?
+                    [recordToUpdate setObject:newlyCreatedRecordUID forKey:@"uid"];
+                    [self.pendingDataRecords removeObjectForKey:inaccurateUpdateId];
+                    [self.pendingDataRecords setObject:recordToUpdate forKey:newlyCreatedRecordUID];
+                    
+                }else{
+                    DLog(@"ignore update with hash %@ as it's outdated", obj[@"hash"]);
+                    [history removeObject:obj[@"hash"]];
+                }
             } else {
                 FHSyncDataRecord *rec = [[FHSyncDataRecord alloc] initWithData:obj[@"data"]];
                 rec.hashValue = obj[@"hash"];
@@ -671,6 +692,7 @@ static NSString *const kChangeHistory = @"changeHistory";
     NSDictionary *deleted = resData[@"delete"];
     if (nil != deleted) {
         [deleted enumerateKeysAndObjectsUsingBlock:^(id key, id obj, BOOL *stop) {
+            // TODO: Ensure that a record which we haven't yet successfully created doesn't make it in here! 
             [self.dataRecords removeObjectForKey:key];
             [FHSyncUtils doNotifyWithDataId:self.datasetId
                                      config:self.syncConfig
